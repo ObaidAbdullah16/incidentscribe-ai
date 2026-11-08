@@ -1,0 +1,64 @@
+name: CI
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - run: pip install -e ".[dev]"
+      - run: ruff check src tests evals scripts
+      - run: pytest -q -p no:warnings
+      - name: Offline evaluation (fails if retrieval@3 < 0.9 or any PII reaches the prompt)
+        run: |
+          python evals/run_eval.py --out eval.md
+          cat eval.md >> "$GITHUB_STEP_SUMMARY"
+      - name: Reproducible Lambda zip
+        run: |
+          bash scripts/build.sh && sha256sum dist/lambda.zip | tee a.txt
+          bash scripts/build.sh && sha256sum dist/lambda.zip | diff - a.txt
+      - uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7
+        with:
+          name: lambda-zip
+          path: dist/lambda.zip
+
+  iac:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "<1.18.0"
+          terraform_wrapper: false
+      - run: pip install checkov shellcheck-py actionlint-py
+      - run: bash scripts/build.sh
+      - run: terraform fmt -check -recursive infra
+      - run: |
+          terraform -chdir=infra/terraform init -backend=false -input=false >/dev/null
+          terraform -chdir=infra/terraform validate
+      - run: checkov -d infra/terraform --framework terraform --config-file .checkov.yaml --quiet --compact
+      - run: shellcheck -x -P SCRIPTDIR scripts/*.sh
+      - run: actionlint

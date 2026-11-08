@@ -1,0 +1,182 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>IncidentScribe live demo</title>
+<meta name="description" content="Alert in, on-call summary out: runbook-grounded, PII-redacted, cost-capped AI on Amazon Bedrock.">
+<style>
+:root{--bg:#f6f7f9;--fg:#18202e;--card:#fff;--line:#dfe3e8;--muted:#5b6475;--accent:#0b6bcb;--sev1:#c62828;--sev2:#d9480f;--sev3:#b26a00;--sev4:#607080;--ok:#1a7f37}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1116;--fg:#e8edf3;--card:#161b22;--line:#2d333b;--muted:#94a0b0;--accent:#58a6ff;--sev1:#f47067;--sev2:#ff8e3c;--sev3:#d29922;--sev4:#8b949e;--ok:#57ab5a}}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--fg);font:15px/1.55 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif}
+main{max-width:1040px;margin:0 auto;padding:28px 16px 56px}
+h1{margin:0 0 4px;font-size:28px}h2{font-size:17px;margin:0 0 10px}
+.muted{color:var(--muted)}.small{font-size:13px}
+.note{background:var(--card);border:1px solid var(--line);border-left:4px solid var(--accent);border-radius:8px;padding:10px 14px;margin:14px 0}
+.grid{display:grid;grid-template-columns:1fr 1fr;gap:16px;margin-top:16px}
+@media (max-width:820px){.grid{grid-template-columns:1fr}}
+.card{background:var(--card);border:1px solid var(--line);border-radius:12px;padding:16px;min-width:0}
+select,textarea,button{font:inherit;border-radius:8px;border:1px solid var(--line);background:var(--bg);color:var(--fg)}
+select{width:100%;padding:8px}
+textarea{width:100%;min-height:120px;padding:8px;resize:vertical}
+button{padding:9px 16px;background:var(--accent);color:#fff;border:0;cursor:pointer;font-weight:600}
+button:disabled{opacity:.5;cursor:wait}
+.row{display:flex;gap:8px;align-items:center;flex-wrap:wrap;margin-top:10px}
+pre{white-space:pre-wrap;word-break:break-word;background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:10px;font-size:12px;max-height:340px;overflow:auto}
+.sev{display:inline-block;font-weight:700;border-radius:6px;padding:2px 8px;color:#fff;font-size:13px}
+.SEV1{background:var(--sev1)}.SEV2{background:var(--sev2)}.SEV3{background:var(--sev3)}.SEV4{background:var(--sev4)}
+ul,ol{margin:6px 0 10px 20px;padding:0}
+.meta{display:grid;grid-template-columns:repeat(auto-fit,minmax(140px,1fr));gap:8px;margin-top:10px}
+.meta div{background:var(--bg);border:1px solid var(--line);border-radius:8px;padding:8px}
+.meta b{display:block;font-size:12px;color:var(--muted);font-weight:500}
+.tabs button{background:transparent;color:var(--fg);border:1px solid var(--line)}
+.tabs button.on{background:var(--accent);color:#fff;border-color:var(--accent)}
+.err{color:var(--sev1)}
+a{color:var(--accent)}
+</style>
+</head>
+<body>
+<main>
+  <h1>IncidentScribe</h1>
+  <div class="muted">Alert in &rarr; on-call summary out. Runbook-grounded, PII-redacted, cost-capped AI on Amazon Bedrock.</div>
+  <div class="note small">
+    <strong>Live demo with synthetic incidents.</strong> Every request is redacted before it reaches the model, checked by a
+    Bedrock Guardrail, and counted against a hard daily budget. When the budget is used up you still get a deterministic
+    (non-AI) summary. Source: <a href="https://github.com/ObaidAbdullah16/incidentscribe-ai">github.com/ObaidAbdullah16/incidentscribe-ai</a>
+  </div>
+
+  <div class="grid">
+    <section class="card">
+      <h2>1. Pick an incident</h2>
+      <div class="tabs row"><button id="tabSample" class="on" type="button">Sample</button><button id="tabOwn" type="button">Write your own</button></div>
+      <div id="samplePane">
+        <div class="row"><select id="sample" aria-label="Sample incident"><option>Loading samples&hellip;</option></select></div>
+        <pre id="payload" aria-label="Incident payload"></pre>
+      </div>
+      <div id="ownPane" hidden>
+        <div class="row"><textarea id="own" aria-label="Incident text">{
+  "title": "Checkout API returning 502 after deploy",
+  "service": "checkout",
+  "severity": "high",
+  "description": "Error rate 9% since 10:02. Customer rahul@example.test says payment page fails."
+}</textarea></div>
+        <div class="small muted">JSON with title, service, severity, description (max 8 KB). Try adding an email or an "ignore previous instructions" line.</div>
+      </div>
+      <div class="row"><button id="run" type="button">Summarise</button><span id="status" class="small muted"></span></div>
+    </section>
+
+    <section class="card" aria-live="polite">
+      <h2>2. Summary</h2>
+      <div id="out" class="muted">Run an incident to see the summary here.</div>
+    </section>
+  </div>
+
+  <section class="card" style="margin-top:16px">
+    <h2>How it works</h2>
+    <ol class="small">
+      <li>CloudWatch alarm / Alertmanager webhook / API call &rarr; one normalised incident.</li>
+      <li>Regex redaction of emails, phones, IPs, cards, Aadhaar numbers, AWS keys, tokens and passwords.</li>
+      <li>BM25 retrieval of the 3 most relevant runbooks (12 runbooks, $0, deterministic).</li>
+      <li>Budget check in DynamoDB (daily and monthly caps) &rarr; Bedrock Converse (Nova Micro) with a Guardrail.</li>
+      <li>Strict JSON validation; anything invalid falls back to a deterministic summary. Result to Slack + DynamoDB.</li>
+    </ol>
+  </section>
+</main>
+<script src="config.js"></script>
+<script>
+(function () {
+  const params = new URLSearchParams(location.search);
+  const API = (params.get("api") || window.INCIDENTSCRIBE_API || "").replace(/\/$/, "");
+  const $ = (id) => document.getElementById(id);
+  let samples = [];
+  let mode = "sample";
+
+  function esc(s) { return String(s ?? "").replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c])); }
+
+  function setMode(m) {
+    mode = m;
+    $("tabSample").classList.toggle("on", m === "sample");
+    $("tabOwn").classList.toggle("on", m === "own");
+    $("samplePane").hidden = m !== "sample";
+    $("ownPane").hidden = m !== "own";
+  }
+  $("tabSample").onclick = () => setMode("sample");
+  $("tabOwn").onclick = () => setMode("own");
+
+  function showPayload() {
+    const s = samples.find((x) => x.id === $("sample").value);
+    $("payload").textContent = s ? JSON.stringify(s.incident, null, 2) : "";
+  }
+  $("sample").onchange = showPayload;
+
+  function render(r) {
+    const s = r.summary, m = r.meta;
+    const list = (xs) => (xs && xs.length) ? "<ul>" + xs.map((x) => "<li>" + esc(x) + "</li>").join("") + "</ul>" : "<p class='muted small'>none</p>";
+    const red = Object.entries(m.redactions || {}).map(([k, v]) => esc(k) + "&times;" + v).join(", ") || "none";
+    const cost = typeof m.cost_usd === "number" ? "$" + m.cost_usd.toFixed(6) : "-";
+    $("out").className = "";
+    $("out").innerHTML =
+      "<div><span class='sev " + esc(s.severity) + "'>" + esc(s.severity) + "</span> <strong>" + esc(s.title) + "</strong></div>" +
+      "<p>" + esc(s.summary) + "</p>" +
+      "<b>Likely causes</b>" + list(s.likely_causes) +
+      "<b>Next steps</b>" + list(s.next_steps) +
+      "<div class='meta'>" +
+      "<div><b>Runbook</b>" + esc(s.runbook_id || "-") + "</div>" +
+      "<div><b>Model</b>" + esc(m.model) + (m.llm_used ? "" : " (no AI)") + "</div>" +
+      "<div><b>Cost</b>" + cost + "</div>" +
+      "<div><b>Tokens in/out</b>" + m.input_tokens + " / " + m.output_tokens + "</div>" +
+      "<div><b>Latency</b>" + m.latency_ms + " ms</div>" +
+      "<div><b>Redacted</b>" + red + "</div>" +
+      "<div><b>Guardrail</b>" + esc(m.guardrail) + "</div>" +
+      "<div><b>Confidence</b>" + esc(s.confidence) + "</div>" +
+      "</div>" +
+      (m.fallback_reason ? "<p class='small muted'>Note: " + esc(m.fallback_reason) + "</p>" : "") +
+      "<p class='small muted'>Retrieved: " + (m.retrieved || []).map((h) => esc(h.id) + " (" + h.score + ")").join(", ") + "</p>";
+  }
+
+  async function run() {
+    if (!API) { $("status").textContent = "API URL not configured (add ?api=https://... to the page URL)."; return; }
+    let body;
+    if (mode === "sample") {
+      body = {sample_id: $("sample").value};
+    } else {
+      try { body = JSON.parse($("own").value); } catch (e) { $("status").innerHTML = "<span class='err'>Not valid JSON</span>"; return; }
+    }
+    $("run").disabled = true;
+    $("status").textContent = "Working...";
+    try {
+      const res = await fetch(API + "/incidents", {method: "POST", headers: {"content-type": "application/json"}, body: JSON.stringify(body)});
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || res.status);
+      render(data);
+      $("status").textContent = "";
+    } catch (e) {
+      $("status").innerHTML = "<span class='err'>" + esc(e.message) + "</span>";
+    } finally {
+      $("run").disabled = false;
+    }
+  }
+  $("run").onclick = run;
+
+  async function load() {
+    if (!API) {
+      $("sample").innerHTML = "<option>API not configured</option>";
+      $("status").textContent = "This page needs ?api=<IncidentScribe API URL>.";
+      return;
+    }
+    try {
+      const res = await fetch(API + "/samples");
+      samples = await res.json();
+      $("sample").innerHTML = samples.map((s) => "<option value='" + esc(s.id) + "'>" + esc(s.id + " - " + s.title) + "</option>").join("");
+      showPayload();
+    } catch (e) {
+      $("sample").innerHTML = "<option>Demo API is offline</option>";
+      $("status").textContent = "The live demo is currently switched off to save cost. See the repository for screenshots and the video.";
+    }
+  }
+  load();
+})();
+</script>
+</body>
+</html>

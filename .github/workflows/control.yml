@@ -1,0 +1,68 @@
+# One-click operations from the Actions tab (or: gh workflow run control.yml -f action=up)
+name: Control (start / stop)
+on:
+  workflow_dispatch:
+    inputs:
+      action:
+        description: What to do
+        type: choice
+        options: [status, up, test-alarm, live-eval, down, down-all]
+        default: status
+
+permissions: {}
+
+concurrency:
+  group: aws-incidentscribe
+  cancel-in-progress: false
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: aws
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Check configuration
+        if: vars.AWS_ROLE_ARN == ''
+        run: |
+          echo "::error::AWS_ROLE_ARN is not set: start the AWS foundation on your laptop first (bash _setup/projects.sh up foundation)"
+          exit 1
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7
+        with:
+          persist-credentials: false
+      - uses: actions/setup-python@6d4fd22b20465ccc0f7354476588e8df7c9ca0e0 # v7
+        with:
+          python-version: "3.13"
+      - uses: hashicorp/setup-terraform@dfe3c3f87815947d99a8997f908cb6525fc44e9e # v4
+        with:
+          terraform_version: "<1.18.0"
+          terraform_wrapper: false
+      - name: Is this repository connected to AWS?
+        if: vars.AWS_ROLE_ARN == ''
+        run: |
+          echo "::error::Not connected to AWS (no AWS_ROLE_ARN variable). AWS accounts from the new AWS sign-up cannot let GitHub log in - run it from your laptop instead: bash _setup/projects.sh up incidentscribe (or down)"
+          exit 1
+      - uses: aws-actions/configure-aws-credentials@e1253824e5c10ff9df46874f81ed3ec929e19cfd # v6
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+          role-session-name: incidentscribe-control
+      - name: Run ${{ inputs.action }}
+        env:
+          ACTION: ${{ inputs.action }}
+          AWS_REGION: ${{ vars.AWS_REGION || 'ap-southeast-2' }}
+          ALLOWED_ORIGINS: ${{ vars.INCIDENTSCRIBE_ALLOWED_ORIGINS }}
+        run: |
+          case "$ACTION" in
+            up)         bash scripts/up.sh ;;
+            down)       bash scripts/down.sh ;;
+            down-all)   bash scripts/down.sh --all ;;
+            test-alarm) bash scripts/send-test-alarm.sh ;;
+            live-eval)
+              pip install -e . boto3
+              python evals/run_eval.py --live --out live-eval.md
+              cat live-eval.md >> "$GITHUB_STEP_SUMMARY" ;;
+            *)          bash scripts/status.sh ;;
+          esac

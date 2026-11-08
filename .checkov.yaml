@@ -1,0 +1,13 @@
+# Conscious trade-offs for a portfolio demo capped at ~$5/month. Each would be revisited for a client.
+skip-check:
+  - CKV_AWS_116   # Lambda DLQ: EventBridge retries + the incident is also visible in CloudWatch; a DLQ adds SQS for little value here
+  - CKV_AWS_117   # Lambda in a VPC: it only calls AWS APIs and Slack; a VPC would need a NAT gateway (~$33/month)
+  - CKV_AWS_119   # DynamoDB CMK: AWS-owned encryption is on; a customer KMS key costs $1/month
+  - CKV_AWS_158   # Log group KMS: same reason, logs contain redacted data only
+  - CKV_AWS_173   # Env var KMS: no secrets in environment variables (the webhook lives in SSM SecureString)
+  - CKV_AWS_272   # Code signing: would need AWS Signer; the zip is built reproducibly in CI instead
+  - CKV_AWS_28    # DynamoDB PITR: tables hold 30-day TTL data that can be regenerated
+  - CKV_AWS_309   # API auth: public demo by design; protected by throttling, size limits and spend caps
+  - CKV_AWS_337   # SSM CMK: the aws/ssm managed key is acceptable for a demo webhook
+  - CKV_AWS_338   # 1-year log retention: 14 days is deliberate (cost and data minimisation)
+  - CKV2_AWS_34   # /incidentscribe/api-url is a public URL (read by the portfolio deploy), not a secret
