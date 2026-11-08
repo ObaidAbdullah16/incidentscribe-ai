@@ -13,7 +13,7 @@ authors = [{ name = "Obaid Abdullah" }]
 dependencies = []   # Lambda runtime provides boto3; everything else is the standard library
 
 [project.optional-dependencies]
-dev = ["pytest>=8", "ruff>=0.6", "boto3>=1.34", "moto[dynamodb,ssm]>=5.0"]
+dev = ["pytest>=8", "ruff==0.17.4", "boto3>=1.34", "moto[dynamodb,ssm]>=5.0"]
 
 [tool.setuptools]
 package-dir = { "" = "src" }
